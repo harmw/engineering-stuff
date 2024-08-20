@@ -6,8 +6,7 @@ FROM ubuntu@sha256:8a37d68f4f73ebf3d4efafbcf66379bf3728902a8038616808f04e34a9ab6
 
 ENV BITCOIN_VERSION 27.0
 
-# TODO: implement multi arch, local is ARM while GitHub is x86
-ENV PLATFORM aarch64-linux-gnu
+ARG TARGETPLATFORM
 
 WORKDIR /tmp
 
@@ -23,11 +22,11 @@ RUN echo \
   && rm -rf /var/lib/apt/lists/*
 
 RUN echo \
+  && PLATFORM=x86_64-linux-gnu \
+  && [[ "${TARGETPLATFORM}" = "linux/arm64" ]] && PLATFORM=aarch64-linux-gnu \
   && curl -sLO https://bitcoincore.org/bin/bitcoin-core-${BITCOIN_VERSION}/bitcoin-${BITCOIN_VERSION}-${PLATFORM}.tar.gz \
   && curl -sLO https://bitcoincore.org/bin/bitcoin-core-${BITCOIN_VERSION}/SHA256SUMS \
-  && grep bitcoin-${BITCOIN_VERSION}-${PLATFORM}.tar.gz SHA256SUMS | sha256sum -c
-
-RUN echo \
+  && grep bitcoin-${BITCOIN_VERSION}-${PLATFORM}.tar.gz SHA256SUMS | sha256sum -c \
   && mkdir -p /opt/bitcoin \
   && tar -xzf bitcoin-${BITCOIN_VERSION}-${PLATFORM}.tar.gz --directory=/opt/bitcoin \
   && ln -s /opt/bitcoin/bitcoin-${BITCOIN_VERSION} /opt/btc
