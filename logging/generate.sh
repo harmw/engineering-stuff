@@ -10,7 +10,7 @@ LOG="httpd.log"
 IP="192.0.2."
 
 echo "resetting log file at $LOG"
-echo "<timestamp> <ip address> <http path> <http verb> <user agent>" > $LOG
+echo "" > $LOG
 
 echo "generating logs"
 for i in $(seq 1 100); do
