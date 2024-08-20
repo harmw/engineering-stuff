@@ -1,6 +1,6 @@
 # deployer
 
-A simple deployment tool to ship whatever was just build in GitHub. (example #2)
+A simple deployment tool to ship whatever was just build in GitHub. (example https://github.com/harmw/engineering-stuff/pull/2)
 
 The CI process takes place entirely in GitHub, building container(s) and pushing them into some registry.
 Workflows in GitHub take care of testing the container, improving trust in what is to be shipped.
