@@ -22,8 +22,8 @@ RUN echo \
   && rm -rf /var/lib/apt/lists/*
 
 RUN echo \
-  && PLATFORM=x86_64-linux-gnu \
-  && [[ "${TARGETPLATFORM}" = "linux/arm64" ]] && PLATFORM=aarch64-linux-gnu \
+  && [[ "${TARGETPLATFORM}" = "linux/arm64" ]] && PLATFORM=aarch64-linux-gnu || PLATFORM=x86_64-linux-gnu \
+  && echo "*** Building for ${PLATFORM} ***" \
   && curl -sLO https://bitcoincore.org/bin/bitcoin-core-${BITCOIN_VERSION}/bitcoin-${BITCOIN_VERSION}-${PLATFORM}.tar.gz \
   && curl -sLO https://bitcoincore.org/bin/bitcoin-core-${BITCOIN_VERSION}/SHA256SUMS \
   && grep bitcoin-${BITCOIN_VERSION}-${PLATFORM}.tar.gz SHA256SUMS | sha256sum -c \
