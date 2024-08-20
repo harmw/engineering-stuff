@@ -1,0 +1,203 @@
+---
+name: Build Container
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  release:
+    types:
+      - created
+      - edited
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+       ref: ${{ github.head_ref }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Configure container metadata
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: |
+          ghcr.io/${{ github.repository }}
+        tags: |
+          type=ref,suffix=.{{sha}},event=pr
+          type=ref,suffix=.{{sha}},event=branch
+          type=semver,pattern={{version}}
+        flavor: |
+          latest=false
+
+    - name: Build images
+      uses: docker/build-push-action@v4
+      id: build
+      with:
+        context: .
+        push: false
+        load: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+    # Note: workflow artifacts are stored for a limited time and have relevance during the lifetime of a PR
+    - name: Create SBOM and upload as workflow artifact
+      uses: anchore/sbom-action@v0
+      with:
+        format: spdx-json
+        artifact-name: "${{ github.event.repository.name }}_sbom.spdx.json"
+        output-file: "${{ github.event.repository.name }}_sbom.spdx.json"
+        image: ${{ steps.meta.outputs.tags }}
+
+    - name: Scan SBOM
+      id: scanner
+      uses: anchore/scan-action@v3
+      continue-on-error: true
+      with:
+        fail-build: true
+        severity-cutoff: critical
+        sbom: "${{ github.event.repository.name }}_sbom.spdx.json"
+    - run: mv ${{ steps.scanner.outputs.sarif }} ${{ github.event.repository.name }}.sarif
+
+    - name: Upload vulnerability report as workflow artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: "${{ github.event.repository.name }}.sarif"
+        path: "${{ github.event.repository.name }}.sarif"
+
+    - name: Update PR with vulnerability scan results
+      uses: actions/github-script@v6
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          let fs = require('fs')
+          let sarif_file = '${{ github.event.repository.name }}.sarif'
+          let sarif
+
+          try {
+            sarif = JSON.parse(fs.readFileSync(sarif_file, 'utf8'));
+          } catch(e) {
+            console.log(e)
+          }
+
+          let output = `:microscope: vulnerability scan result: **failure in parsing report**`
+
+          if (typeof(sarif) == 'object') {
+            const issues = sarif.runs[0].results.length > 0 ? sarif.runs[0].results.length : 0
+            output = `:microscope: vulnerability scan result: \`${issues}\` issue(s) found `
+
+            if (issues > 0) {
+              let table = '\n'
+              table += '<details><summary>View details...</summary>\n'
+              table += '\n'
+              table += '| Severity | Description | Resolution |\n'
+              table += '|----------|-------------|------------|\n'
+
+              let criticals = 0
+              let highs = 0
+              for (run of sarif.runs) {
+                  for (rule of run.tool.driver.rules) {
+                      let description = rule.shortDescription.text
+                      let resolution = rule.fullDescription.text
+                      let severity = rule.properties['security-severity']
+                      table += `| ${severity} | ${description} | ${resolution} |\n`
+                      if (description.toLowerCase().indexOf('critical vulnerability') > -1) {
+                        criticals++
+                      }
+                      if (description.toLowerCase().indexOf('high vulnerability') > -1) {
+                        highs++
+                      }
+                  }
+              }
+              output += highs > 0 ? ':warning:' : ''
+
+              if (criticals > 0) {
+                output += `\n:pause_button: **one or more vulnerabilities found with label _critical_, pausing build. Please resolve these to continue.** :rotating_light:`
+              }
+
+              output += table
+              output += '</details>'
+
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              })
+            }
+          }
+
+    # The publish-sbom action only operates by itself on release events, during PR builds it will not do anything
+    - name: Publish vulnerability report as release artifact
+      uses: anchore/sbom-action/publish-sbom@v0
+      env:
+        ANCHORE_SBOM_ACTION_PRIOR_ARTIFACT: ""
+      with:
+        sbom-artifact-match: ".*\\.sarif"
+
+    # The publish-sbom action only operates by itself on release events, during PR builds it will not do anything
+    - name: Publish SBOM as release artifact
+      uses: anchore/sbom-action/publish-sbom@v0
+      env:
+        ANCHORE_SBOM_ACTION_PRIOR_ARTIFACT: ""
+      with:
+        sbom-artifact-match: ".*_sbom\\.spdx\\.json$"
+
+    - name: Close the gate if problems were found
+      if: steps.scanner.outcome == 'failure'
+      run: exit 1
+
+    - name: Push images
+      uses: docker/build-push-action@v4
+      id: push
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+    - name: Update PR with pushed image
+      uses: actions/github-script@v6
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          const tag = '${{ steps.meta.outputs.tags }}'.split('/').slice(1).join('/')
+          const repoName = '${{ github.event.repository.name }}'
+          const versionTag = tag.split(':')[1]
+
+          const output = `:whale: the following is now available for deployment: \`${tag}\``
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: output
+          })
+
+    # outputs.imageid is returned as sha256:<hash>, here we extract <hash>
+    - name: Store tag name as container imageid.ecr.txt
+      id: image
+      run: |
+        imageid=$(echo ${{ steps.build.outputs.imageid }} | cut -d ':' -f2)
+        echo ${{ steps.meta.outputs.tags }} | tee ${imageid}.ecr.txt
+        echo "txt=$imageid" >> $GITHUB_OUTPUT
+
+    - name: Upload container id as workflow artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: "${{ steps.image.outputs.txt }}.ecr.txt"
+        path: "${{ steps.image.outputs.txt }}.ecr.txt"
+
+    # The publish-sbom action only operates by itself on release events, during PR builds it will not do anything
+    - name: Publish container id as release artifact
+      uses: anchore/sbom-action/publish-sbom@v0
+      env:
+        ANCHORE_SBOM_ACTION_PRIOR_ARTIFACT: ""
+      with:
+        sbom-artifact-match: ".*\\.ecr\\.txt$"
