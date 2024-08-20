@@ -8,6 +8,7 @@ Repo layout:
 | /deployer       | simple deployment tool to get Nomad to run containers |
 | /logging        | request counter for httpd.log                         |
 | /logging-python | request counter for httpd.log (python implementation) |
+| /iam            | terraform project with some IAM stuff going on        |
 
 ## Docker
 
