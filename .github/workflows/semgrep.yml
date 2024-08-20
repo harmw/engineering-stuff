@@ -1,0 +1,138 @@
+name: Semgrep
+
+on:
+  pull_request: {}
+  push:
+    branches: ["master", "main"]
+  release:
+    types: ["created", "edited"]
+
+jobs:
+  scanner:
+    name: Scan
+    runs-on: ubuntu-latest
+    outputs:
+      pass-gate: ${{ steps.semgrep.outcome }}
+
+    # Run all steps in this container
+    container:
+      image: returntocorp/semgrep
+
+    if: (github.actor != 'dependabot[bot]')
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - run: semgrep ci --sarif -o semgrep.sarif
+        id: semgrep
+        continue-on-error: true
+        env:
+           # Add the rules that Semgrep uses by setting the SEMGREP_RULES environment variable. 
+           SEMGREP_RULES: p/default # more at semgrep.dev/explore
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: semgrep.sarif
+          path: semgrep.sarif
+
+      # The publish-sbom action only operates by itself on release events, during PR builds it will not do anything
+      - name: Publish semgrep analysis as release artifact
+        uses: anchore/sbom-action/publish-sbom@v0
+        env:
+          ANCHORE_SBOM_ACTION_PRIOR_ARTIFACT: ""
+        with:
+          sbom-artifact-match: "semgrep\\.sarif"
+
+  commenter:
+    needs: scanner
+    name: Comment
+    runs-on: ubuntu-latest
+
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: semgrep.sarif
+          path: /tmp/
+
+      - uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require("fs");
+
+            console.log(`started on action: ${context.payload.action}`);
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            // https://stackoverflow.com/questions/68061051/get-commit-sha-in-github-actions
+            const commit_id = context.payload.pull_request.head.sha;
+            const pr = context.payload.number;
+
+            const readSarif = () => {
+              try {
+                let sarifFile = fs.readFileSync("/tmp/semgrep.sarif");
+                return JSON.parse(sarifFile);
+              } catch(e) {
+                console.log(e);
+                return {"runs": []};
+              };
+            };
+
+            for (run of readSarif().runs) {
+              if (!run.results) { continue; }
+
+              for (var index in run.results) {
+                let rule = run.results[index];
+                let text = rule.message.text;
+                let ruleid = rule.ruleId;
+                let body = `:thought_balloon: \`semgrep\` found a [possible issue](https://semgrep.dev/r/${ruleid}) in this code:\n`;
+                body += `> ${text}\n`;
+
+                const locations = rule.locations;
+
+                for (var index in locations) {
+                  let loc = locations[index].physicalLocation;
+                  let path = loc.artifactLocation.uri;
+                  let line = loc.region.endLine;
+
+                  github.rest.pulls.listReviewComments({
+                    owner: owner,
+                    repo: repo,
+                    pull_number: pr
+                  }).then((result) => {
+                    for (var comment of result.data) {
+                      // console.log(`found review comment on L${comment.line} in ${comment.path}`);
+                      if (body == comment.body) {
+                        console.log(`ignoring duplicate comment for L${comment.line} in ${comment.path}`);
+                        return false;
+                      }
+                    }
+
+                    console.log(`posting comment for finding on L${line} in ${path}`);
+
+                    github.rest.pulls.createReviewComment({
+                      owner: owner,
+                      repo: repo,
+                      pull_number: pr,
+                      body: body,
+                      commit_id: commit_id,
+                      path: path,
+                      line: line,
+                    }).then((ok) => {
+                      console.log("posted");
+                    }, (error) => {
+                      // it typically fails when commenting on a file not part of this PR, which is fine
+                      console.log(`failed: ${error}`);
+                    });
+                  });
+                };
+
+              };
+            }
+
+      - name: Close the gate if problems were found
+        if: needs.scanner.outputs.pass-gate == 'failure'
+        run: exit 1
