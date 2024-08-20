@@ -63,6 +63,7 @@ Revision 63b636e5cbaca312cf6ea63e040f445f05f00478
 Launch:
 
 ```bash
+export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
 nomad agent -dev -bind 0.0.0.0 -network-interface '{{ GetDefaultInterfaces | attr "name" }}'
 ```
 
