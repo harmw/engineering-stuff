@@ -5,6 +5,8 @@
 FROM ubuntu@sha256:8a37d68f4f73ebf3d4efafbcf66379bf3728902a8038616808f04e34a9ab63ee
 
 ENV BITCOIN_VERSION 27.0
+
+# TODO: implement multi arch, local is ARM while GitHub is x86
 ENV PLATFORM aarch64-linux-gnu
 
 WORKDIR /tmp
