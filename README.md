@@ -1,10 +1,21 @@
 # random bits
 
+Repo layout:
+
+| folder          | description                                           |
+|-----------------|-------------------------------------------------------|
+| /               | building, testing and running containers              |
+| /deployer       | simple deployment tool to get Nomad to run containers |
+| /logging        | request counter for httpd.log                         |
+| /logging-python | request counter for httpd.log (python implementation) |
+
+## Docker
+
 Some bits around bitcoin and docker.
 
 Assumes `docker` and something like `colima` (mac: `brew install colima docker`).
 
-## Building
+### Building
 
 ```bash
 docker build -t bitcoin-core .
@@ -30,7 +41,7 @@ Current result:
    ├── by severity: 0 critical, 0 high, 5 medium, 7 low, 6 negligible
 ```
 
-## Running (local)
+### Running (local)
 
 This launches the container:
 
@@ -38,7 +49,7 @@ This launches the container:
 docker run --rm -it bitcoin-core
 ```
 
-## Running (nomad)
+### Running (nomad)
 
 Installation instructions available [upstream](https://developer.hashicorp.com/nomad/tutorials/get-started/gs-install).
 
